@@ -1,7 +1,6 @@
-
 import React, { useState, useEffect, useRef } from 'react';
 import { createRoot } from 'react-dom/client';
-import { GoogleGenAI } from "@google/genai";
+import { GoogleGenerativeAI } from "@google/generative-ai"; // Alterado para a lib Web
 import ReactMarkdown from 'react-markdown';
 import remarkMath from 'remark-math';
 import rehypeKatex from 'rehype-katex';
@@ -43,37 +42,33 @@ const GeminiPanel = ({ currentLangCode }) => {
     setLoading(true);
 
     try {
-      const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+      // Inicialização correta para Web com a nova biblioteca
+      const genAI = new GoogleGenerativeAI(process.env.API_KEY);
+      
+      // Definição do modelo Gemini 2.0 Flash e instruções de sistema
+      const model = genAI.getGenerativeModel({ 
+        model: "gemini-2.0-flash", 
+        systemInstruction: `És o GeoGebra Omni. RESPONDE APENAS EM ${currentLangName.toUpperCase()}. 
+          O utilizador selecionou o idioma ${currentLangName}.
+          Se o utilizador pedir para criar algo, usa comandos GeoGebra standard compatíveis com este idioma ou em sintaxe universal.
+          Usa LaTeX para expressões matemáticas sempre que possível.`
+      });
+
       const ggb = (window as any).ggbApplet;
       const objects = ggb ? 
         ggb.getAllObjectNames().map(n => `${n}: ${ggb.getValueString(n)}`).join('\n') : "Nenhum";
       
-      const response = await ai.models.generateContent({
-        model: 'gemini-3-pro-preview',
-        contents: `LANG: ${currentLangName}\nCONTEXT:\n${objects}\n\nUSER: ${userText}`,
-        config: {
-          systemInstruction: `És o GeoGebra Omni. RESPONDE APENAS EM ${currentLangName.toUpperCase()}. 
-          O utilizador selecionou o idioma ${currentLangName}.
-          Se o utilizador pedir para criar algo, usa comandos GeoGebra standard compatíveis com este idioma ou em sintaxe universal.`,
-          tools: [{ googleSearch: {} }]
-        }
-      });
+      // Geração de conteúdo
+      const result = await model.generateContent(`LANG: ${currentLangName}\nCONTEXT:\n${objects}\n\nUSER: ${userText}`);
+      const response = await result.response;
+      const text = response.text();
 
-      if (response.text) {
-        let finalOutput = response.text;
-        const chunks = response.candidates?.[0]?.groundingMetadata?.groundingChunks;
-        if (chunks && chunks.length > 0) {
-          const sources = chunks
-            .filter(chunk => chunk.web)
-            .map(chunk => `* [${chunk.web?.title}](${chunk.web?.uri})`)
-            .join('\n');
-          if (sources) finalOutput += `\n\n**Sources:**\n${sources}`;
-        }
-        setMessages(prev => [...prev, { role: 'ai', text: finalOutput }]);
+      if (text) {
+        setMessages(prev => [...prev, { role: 'ai', text: text }]);
       }
     } catch (e) {
       console.error(e);
-      setMessages(prev => [...prev, { role: 'ai', text: "Erro ao comunicar com a IA. Por favor, verifique a ligação." }]);
+      setMessages(prev => [...prev, { role: 'ai', text: "Erro ao comunicar com a IA. Verifica a API Key e a ligação." }]);
     } finally {
       setLoading(false);
     }
@@ -123,14 +118,14 @@ const App = () => {
   const ggbApiRef = useRef(null);
   const isInitialized = useRef(false);
 
-  // Inicializa o GeoGebra uma única vez como "classic" para suportar todas as vistas simultaneamente
+  // Inicializa o GeoGebra uma única vez como "classic"
   useEffect(() => {
     if ((window as any).GGBApplet && !isInitialized.current) {
       const container = document.getElementById('ggb-element');
       if (container) {
         container.innerHTML = '';
         const params = {
-          "appName": "classic", // Usar classic permite persistência entre 2D, 3D e CAS
+          "appName": "classic", 
           "width": window.innerWidth - (isPanelOpen ? 384 : 0),
           "height": window.innerHeight - 64,
           "showToolBar": true,
@@ -141,7 +136,6 @@ const App = () => {
           "appletOnLoad": function(api) {
             ggbApiRef.current = api;
             (window as any).ggbApplet = api;
-            // Define a perspectiva inicial baseada no estado
             api.setPerspective(PERSPECTIVES[appType]);
           }
         };
@@ -151,13 +145,14 @@ const App = () => {
     }
   }, []);
 
-  // Muda a perspectiva (vista) sem recarregar o applet nem apagar os dados
+  // Muda a perspectiva (vista)
   useEffect(() => {
     if (ggbApiRef.current) {
       ggbApiRef.current.setPerspective(PERSPECTIVES[appType]);
     }
   }, [appType]);
 
+  // Ajusta tamanho da janela quando o painel abre/fecha
   useEffect(() => {
     if ((window as any).ggbApplet && typeof (window as any).ggbApplet.setSize === 'function') {
       const newWidth = window.innerWidth - (isPanelOpen ? 384 : 0);
@@ -166,12 +161,14 @@ const App = () => {
     }
   }, [isPanelOpen]);
 
+  // Muda idioma do GeoGebra
   useEffect(() => {
     if (ggbApiRef.current) {
       ggbApiRef.current.setLanguage(langCode);
     }
   }, [langCode]);
 
+  // Gere resize da janela
   useEffect(() => {
     const handleResize = () => {
       if ((window as any).ggbApplet) {
