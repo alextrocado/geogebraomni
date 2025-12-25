@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { createRoot } from 'react-dom/client';
-import { GoogleGenerativeAI } from "@google/generative-ai"; // Alterado para a lib Web
+import { GoogleGenerativeAI } from "@google/generative-ai";
 import ReactMarkdown from 'react-markdown';
 import remarkMath from 'remark-math';
 import rehypeKatex from 'rehype-katex';
@@ -42,23 +42,21 @@ const GeminiPanel = ({ currentLangCode }) => {
     setLoading(true);
 
     try {
-      // Inicialização correta para Web com a nova biblioteca
+      // Aqui ele vai buscar a tua chave das Variáveis de Ambiente que configuraste!
       const genAI = new GoogleGenerativeAI(process.env.API_KEY);
       
-      // Definição do modelo Gemini 2.0 Flash e instruções de sistema
       const model = genAI.getGenerativeModel({ 
         model: "gemini-2.0-flash", 
         systemInstruction: `És o GeoGebra Omni. RESPONDE APENAS EM ${currentLangName.toUpperCase()}. 
           O utilizador selecionou o idioma ${currentLangName}.
           Se o utilizador pedir para criar algo, usa comandos GeoGebra standard compatíveis com este idioma ou em sintaxe universal.
-          Usa LaTeX para expressões matemáticas sempre que possível.`
+          Usa LaTeX para expressões matemáticas.`
       });
 
       const ggb = (window as any).ggbApplet;
       const objects = ggb ? 
         ggb.getAllObjectNames().map(n => `${n}: ${ggb.getValueString(n)}`).join('\n') : "Nenhum";
       
-      // Geração de conteúdo
       const result = await model.generateContent(`LANG: ${currentLangName}\nCONTEXT:\n${objects}\n\nUSER: ${userText}`);
       const response = await result.response;
       const text = response.text();
@@ -68,7 +66,7 @@ const GeminiPanel = ({ currentLangCode }) => {
       }
     } catch (e) {
       console.error(e);
-      setMessages(prev => [...prev, { role: 'ai', text: "Erro ao comunicar com a IA. Verifica a API Key e a ligação." }]);
+      setMessages(prev => [...prev, { role: 'ai', text: "Erro: Verifica a consola para detalhes." }]);
     } finally {
       setLoading(false);
     }
@@ -118,14 +116,13 @@ const App = () => {
   const ggbApiRef = useRef(null);
   const isInitialized = useRef(false);
 
-  // Inicializa o GeoGebra uma única vez como "classic"
   useEffect(() => {
     if ((window as any).GGBApplet && !isInitialized.current) {
       const container = document.getElementById('ggb-element');
       if (container) {
         container.innerHTML = '';
         const params = {
-          "appName": "classic", 
+          "appName": "classic",
           "width": window.innerWidth - (isPanelOpen ? 384 : 0),
           "height": window.innerHeight - 64,
           "showToolBar": true,
@@ -145,14 +142,12 @@ const App = () => {
     }
   }, []);
 
-  // Muda a perspectiva (vista)
   useEffect(() => {
     if (ggbApiRef.current) {
       ggbApiRef.current.setPerspective(PERSPECTIVES[appType]);
     }
   }, [appType]);
 
-  // Ajusta tamanho da janela quando o painel abre/fecha
   useEffect(() => {
     if ((window as any).ggbApplet && typeof (window as any).ggbApplet.setSize === 'function') {
       const newWidth = window.innerWidth - (isPanelOpen ? 384 : 0);
@@ -161,14 +156,12 @@ const App = () => {
     }
   }, [isPanelOpen]);
 
-  // Muda idioma do GeoGebra
   useEffect(() => {
     if (ggbApiRef.current) {
       ggbApiRef.current.setLanguage(langCode);
     }
   }, [langCode]);
 
-  // Gere resize da janela
   useEffect(() => {
     const handleResize = () => {
       if ((window as any).ggbApplet) {
@@ -217,21 +210,4 @@ const App = () => {
           </div>
           
           <button onClick={() => setIsPanelOpen(!isPanelOpen)} className={`w-10 h-10 rounded-xl flex items-center justify-center transition-all ${isPanelOpen ? 'bg-indigo-600 text-white shadow-lg' : 'bg-slate-800 text-white'}`}>
-            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z" /></svg>
-          </button>
-        </div>
-      </header>
-      
-      <main className="flex flex-1 relative overflow-hidden bg-white">
-        <div className="flex-1 relative" id="ggb-element"></div>
-        {isPanelOpen && <GeminiPanel currentLangCode={langCode} />}
-      </main>
-    </div>
-  );
-};
-
-const rootElement = document.getElementById('root');
-if (rootElement) {
-  const root = createRoot(rootElement);
-  root.render(<App />);
-}
+            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2
