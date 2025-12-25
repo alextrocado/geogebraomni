@@ -42,7 +42,6 @@ const GeminiPanel = ({ currentLangCode }) => {
     setLoading(true);
 
     try {
-      // Aqui ele vai buscar a tua chave das Variáveis de Ambiente que configuraste!
       const genAI = new GoogleGenerativeAI(process.env.API_KEY);
       
       const model = genAI.getGenerativeModel({ 
@@ -66,7 +65,7 @@ const GeminiPanel = ({ currentLangCode }) => {
       }
     } catch (e) {
       console.error(e);
-      setMessages(prev => [...prev, { role: 'ai', text: "Erro: Verifica a consola para detalhes." }]);
+      setMessages(prev => [...prev, { role: 'ai', text: "Erro: Verifica a tua API Key e a ligação." }]);
     } finally {
       setLoading(false);
     }
@@ -210,4 +209,21 @@ const App = () => {
           </div>
           
           <button onClick={() => setIsPanelOpen(!isPanelOpen)} className={`w-10 h-10 rounded-xl flex items-center justify-center transition-all ${isPanelOpen ? 'bg-indigo-600 text-white shadow-lg' : 'bg-slate-800 text-white'}`}>
-            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2
+            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z" /></svg>
+          </button>
+        </div>
+      </header>
+      
+      <main className="flex flex-1 relative overflow-hidden bg-white">
+        <div className="flex-1 relative" id="ggb-element"></div>
+        {isPanelOpen && <GeminiPanel currentLangCode={langCode} />}
+      </main>
+    </div>
+  );
+};
+
+const rootElement = document.getElementById('root');
+if (rootElement) {
+  const root = createRoot(rootElement);
+  root.render(<App />);
+}
