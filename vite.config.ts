@@ -3,7 +3,6 @@ import { defineConfig, loadEnv } from 'vite';
 import react from '@vitejs/plugin-react';
 
 export default defineConfig(({ mode }) => {
-    // Carrega variáveis de ambiente, prevenindo falhas se não existirem
     const env = loadEnv(mode, process.cwd(), '');
     
     return {
@@ -13,7 +12,7 @@ export default defineConfig(({ mode }) => {
       },
       plugins: [react()],
       define: {
-        // O segredo está aqui: o "|| ''" impede que o site crashe se a chave for undefined
+        // O || '' impede que o site crashe se a variável não existir no momento do build
         'process.env.API_KEY': JSON.stringify(env.GEMINI_API_KEY || ''),
         'process.env.GEMINI_API_KEY': JSON.stringify(env.GEMINI_API_KEY || '')
       },
