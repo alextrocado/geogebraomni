@@ -25,23 +25,23 @@ const ggbCommandTool = {
   name: 'executeGGBCommands',
   parameters: {
     type: Type.OBJECT,
-    description: 'Executa uma lista de comandos standard do GeoGebra na aplicação.',
+    description: 'Executa comandos técnicos no motor GeoGebra. Utilize SEMPRE nomes de comandos em Inglês.',
     properties: {
       commands: {
         type: Type.ARRAY,
         items: { type: Type.STRING },
-        description: 'Lista de strings contendo comandos GeoGebra (ex: ["A=(1,1)", "Circle(A, 5)"]).'
+        description: 'Lista de comandos em INGLÊS. Ex: ["f(x) := x^3", "sol := Solve[f(x)=0]"].'
       },
       explanation: {
         type: Type.STRING,
-        description: 'Uma breve explicação do que estes comandos fazem.'
+        description: 'Resumo da operação no idioma do utilizador.'
       }
     },
     required: ['commands']
   }
 };
 
-const GeminiPanel = ({ currentLangCode }) => {
+const GeminiPanel = ({ currentLangCode, currentAppType }) => {
   const [messages, setMessages] = useState([]);
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(false);
@@ -56,57 +56,75 @@ const GeminiPanel = ({ currentLangCode }) => {
   const handleChatSend = async () => {
     if (!input.trim() || loading) return;
     const userText = input;
-    const currentLangName = LANGUAGES[currentLangCode].name;
+    const currentLangName = LANGUAGES[currentLangCode as keyof typeof LANGUAGES].name;
     
     setInput('');
     setMessages(prev => [...prev, { role: 'user', text: userText }]);
     setLoading(true);
 
     try {
-      // Inicializar a API com a chave do ambiente
       const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
       const ggb = (window as any).ggbApplet;
       
-      // Capturar contexto atual para a IA saber o que já existe
       const objects = ggb ? 
-        ggb.getAllObjectNames().map(n => `${n}: ${ggb.getValueString(n)}`).join('\n') : "Nenhum";
+        ggb.getAllObjectNames().map((n: string) => `${n}: ${ggb.getValueString(n)}`).join('\n') : "Nenhum";
       
       const response = await ai.models.generateContent({
         model: 'gemini-3-pro-preview',
-        contents: `IDIOMA ATUAL: ${currentLangName}\nOBJETOS NO GEOGEBRA:\n${objects}\n\nUTILIZADOR: ${userText}`,
+        contents: `IDIOMA: ${currentLangName}\nVISTA ATIVA: ${currentAppType.toUpperCase()}\nOBJETOS:\n${objects}\n\nUTILIZADOR: ${userText}`,
         config: {
-          systemInstruction: `És o GeoGebra Omni, um assistente matemático avançado e tutor digital.
-          Estás integrado numa aplicação que corre o GeoGebra Classic.
+          systemInstruction: `És o GeoGebra Omni. Estás a controlar a janela ${currentAppType.toUpperCase()}.
           
-          OBJETIVO:
-          Ajudar o utilizador a explorar matemática, geometria e álgebra através de visualizações no GeoGebra.
+          REGRAS CRÍTICAS PARA A JANELA CAS:
+          1. Para que os comandos APAREÇAM nas linhas numeradas do CAS, deves SEMPRE atribuir um nome ao resultado usando ':='.
+             - ERRADO: "Solve[x^2=1]" (Aparece na vista algébrica mas não cria linha persistente no CAS via API).
+             - CORRETO: "sol := Solve[x^2=1]" (O motor CAS reconhece a atribuição e regista a operação).
+             - CORRETO: "derivada_f := Derivative[f]"
+             - CORRETO: "ponto_a := (1, 2)"
+          2. Usa NOMES DE COMANDOS EM INGLÊS (Derivative, Solve, Integral, Factor, Expand).
+          3. Usa parênteses retos '[]' para os argumentos dos comandos.
           
-          REGRAS:
-          1. Responde SEMPRE em ${currentLangName.toUpperCase()}.
-          2. Sempre que o utilizador pedir para criar, desenhar, calcular ou manipular algo, deves usar a ferramenta 'executeGGBCommands'.
-          3. Garante que os comandos enviados são compatíveis com a sintaxe oficial do GeoGebra (ex: "Segment((0,0), (2,2))", "f(x)=x^2").
-          4. No texto da resposta, sê didático e explica o raciocínio matemático por trás da construção.`,
-          tools: [
-            { functionDeclarations: [ggbCommandTool] }
-            // Nota: googleSearch removido para evitar conflito com functionDeclarations
-          ]
+          INTERAÇÃO:
+          - Responde em ${currentLangName.toUpperCase()}.
+          - Se pedirem para resolver, derivar ou integrar, utiliza a ferramenta de comandos com atribuições simbólicas (:=).`,
+          tools: [{ functionDeclarations: [ggbCommandTool] }]
         }
       });
 
-      // 1. Verificar e executar Tool Calls (Ações no GeoGebra)
       if (response.functionCalls) {
         for (const fc of response.functionCalls) {
           if (fc.name === 'executeGGBCommands' && ggb) {
             const args = fc.args as any;
             const commands = args.commands;
-            const explanation = args.explanation;
-            
+            const casResults: string[] = [];
+
             if (Array.isArray(commands)) {
-              commands.forEach(cmd => ggb.evalCommand(cmd));
+              // Força a perspectiva antes de cada lote de comandos
+              ggb.setPerspective(PERSPECTIVES[currentAppType as keyof typeof PERSPECTIVES]);
               
+              for (const cmd of commands) {
+                // Executa no motor principal
+                ggb.evalCommand(cmd);
+                
+                // Se for CAS e houver atribuição (:=), tentamos ler o valor resultante para o chat
+                if (currentAppType === 'cas' && cmd.includes(':=')) {
+                  const varName = cmd.split(':=')[0].trim();
+                  // Pequeno delay opcional ou leitura direta
+                  const val = ggb.getValueString(varName);
+                  if (val && val.includes('=')) {
+                    // Limpa a string para mostrar apenas o resultado se possível
+                    casResults.push(val);
+                  }
+                }
+              }
+              
+              const resultText = casResults.length > 0 
+                ? `\n\n**Resultados no CAS:**\n${casResults.map(r => `- ${r}`).join('\n')}` 
+                : "";
+
               setMessages(prev => [...prev, { 
                 role: 'ai', 
-                text: `**Ação executada no GeoGebra:** ${explanation || "Objetos criados no gráfico."}`, 
+                text: `**Ação Executada:** ${args.explanation || "Os comandos foram enviados para a vista CAS."}${resultText}`, 
                 isAction: true 
               }]);
             }
@@ -114,13 +132,12 @@ const GeminiPanel = ({ currentLangCode }) => {
         }
       }
 
-      // 2. Mostrar resposta de texto principal
       if (response.text) {
         setMessages(prev => [...prev, { role: 'ai', text: response.text }]);
       }
     } catch (e) {
       console.error(e);
-      setMessages(prev => [...prev, { role: 'ai', text: "Ocorreu um erro ao processar o seu pedido. Por favor, tente novamente ou verifique as instruções." }]);
+      setMessages(prev => [...prev, { role: 'ai', text: "Erro ao comunicar com o motor matemático do GeoGebra." }]);
     } finally {
       setLoading(false);
     }
@@ -135,7 +152,9 @@ const GeminiPanel = ({ currentLangCode }) => {
           </div>
           <div>
             <h2 className="font-bold text-lg gemini-text-gradient leading-none">GeoGebra Omni</h2>
-            <p className="text-[10px] text-indigo-600 font-black uppercase tracking-widest mt-1">Controlo Direto</p>
+            <p className="text-[10px] text-indigo-600 font-black uppercase tracking-widest mt-1 flex items-center gap-1">
+              {currentAppType === 'cas' ? "Motor CAS Ativo" : `Vista: ${currentAppType.toUpperCase()}`}
+            </p>
           </div>
         </div>
       </div>
@@ -144,8 +163,8 @@ const GeminiPanel = ({ currentLangCode }) => {
         {messages.map((m, i) => (
           <div key={i} className={`flex ${m.role === 'user' ? 'justify-end' : 'justify-start'}`}>
             <div className={`max-w-[90%] p-4 rounded-2xl text-sm shadow-sm transition-all ${
-              m.role === 'user' ? 'bg-indigo-600 text-white rounded-tr-none shadow-indigo-200' : 
-              m.isAction ? 'bg-emerald-50 text-emerald-800 border border-emerald-100 rounded-lg text-xs' :
+              m.role === 'user' ? 'bg-indigo-600 text-white rounded-tr-none' : 
+              m.isAction ? 'bg-indigo-50 text-indigo-900 border border-indigo-100 rounded-lg text-[11px] font-mono whitespace-pre-wrap' :
               'bg-white text-slate-800 border border-slate-100 rounded-tl-none leading-relaxed'
             }`}>
               <ReactMarkdown remarkPlugins={[remarkMath]} rehypePlugins={[rehypeKatex]}>{m.text}</ReactMarkdown>
@@ -162,10 +181,10 @@ const GeminiPanel = ({ currentLangCode }) => {
             value={input} 
             onChange={(e) => setInput(e.target.value)} 
             onKeyDown={(e) => e.key === 'Enter' && handleChatSend()} 
-            placeholder={`Peça algo (ex: "faz um cubo")`} 
+            placeholder={currentAppType === 'cas' ? "Ex: Calcula a derivada de x^2..." : "Comando..."} 
             className="w-full pl-4 pr-12 py-4 rounded-2xl bg-slate-50 border border-slate-200 text-sm focus:ring-2 focus:ring-indigo-400 focus:outline-none transition-all" 
           />
-          <button onClick={handleChatSend} className="absolute right-2 p-2 rounded-xl bg-indigo-600 text-white shadow-lg active:scale-95 transition-transform disabled:opacity-50" disabled={loading}>
+          <button onClick={handleChatSend} className="absolute right-2 p-2 rounded-xl bg-indigo-600 text-white shadow-lg active:scale-95 transition-transform" disabled={loading}>
             <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M13 5l7 7-7 7M5 5l7 7-7 7" /></svg>
           </button>
         </div>
@@ -175,7 +194,7 @@ const GeminiPanel = ({ currentLangCode }) => {
 };
 
 const App = () => {
-  const [appType, setAppType] = useState('3d');
+  const [appType, setAppType] = useState('cas');
   const [isPanelOpen, setIsPanelOpen] = useState(true);
   const [langCode, setLangCode] = useState('pt');
   const ggbApiRef = useRef(null);
@@ -195,7 +214,7 @@ const App = () => {
           "showMenuBar": true,
           "language": langCode,
           "id": "ggbApplet",
-          "appletOnLoad": function(api) {
+          "appletOnLoad": function(api: any) {
             ggbApiRef.current = api;
             (window as any).ggbApplet = api;
             api.setPerspective(PERSPECTIVES[appType as keyof typeof PERSPECTIVES]);
@@ -282,7 +301,7 @@ const App = () => {
       
       <main className="flex flex-1 relative overflow-hidden bg-white">
         <div className="flex-1 relative" id="ggb-element"></div>
-        {isPanelOpen && <GeminiPanel currentLangCode={langCode} />}
+        {isPanelOpen && <GeminiPanel currentLangCode={langCode} currentAppType={appType} />}
       </main>
     </div>
   );
