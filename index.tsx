@@ -1,6 +1,7 @@
+
 import React, { useState, useEffect, useRef } from 'react';
 import { createRoot } from 'react-dom/client';
-import { GoogleGenerativeAI } from "@google/generative-ai";
+import { GoogleGenAI, Type } from "@google/genai";
 import ReactMarkdown from 'react-markdown';
 import remarkMath from 'remark-math';
 import rehypeKatex from 'rehype-katex';
@@ -18,6 +19,26 @@ const PERSPECTIVES = {
   'geometry': '2',
   '3d': '5',
   'cas': '4'
+};
+
+const ggbCommandTool = {
+  name: 'executeGGBCommands',
+  parameters: {
+    type: Type.OBJECT,
+    description: 'Executa uma lista de comandos standard do GeoGebra na aplicação.',
+    properties: {
+      commands: {
+        type: Type.ARRAY,
+        items: { type: Type.STRING },
+        description: 'Lista de strings contendo comandos GeoGebra (ex: ["A=(1,1)", "Circle(A, 5)"]).'
+      },
+      explanation: {
+        type: Type.STRING,
+        description: 'Uma breve explicação do que estes comandos fazem.'
+      }
+    },
+    required: ['commands']
+  }
 };
 
 const GeminiPanel = ({ currentLangCode }) => {
@@ -42,30 +63,64 @@ const GeminiPanel = ({ currentLangCode }) => {
     setLoading(true);
 
     try {
-      const genAI = new GoogleGenerativeAI(process.env.API_KEY);
-      
-      const model = genAI.getGenerativeModel({ 
-        model: "gemini-2.0-flash", 
-        systemInstruction: `És o GeoGebra Omni. RESPONDE APENAS EM ${currentLangName.toUpperCase()}. 
-          O utilizador selecionou o idioma ${currentLangName}.
-          Se o utilizador pedir para criar algo, usa comandos GeoGebra standard compatíveis com este idioma ou em sintaxe universal.
-          Usa LaTeX para expressões matemáticas.`
-      });
-
+      // Inicializar a API com a chave do ambiente
+      const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
       const ggb = (window as any).ggbApplet;
+      
+      // Capturar contexto atual para a IA saber o que já existe
       const objects = ggb ? 
         ggb.getAllObjectNames().map(n => `${n}: ${ggb.getValueString(n)}`).join('\n') : "Nenhum";
       
-      const result = await model.generateContent(`LANG: ${currentLangName}\nCONTEXT:\n${objects}\n\nUSER: ${userText}`);
-      const response = await result.response;
-      const text = response.text();
+      const response = await ai.models.generateContent({
+        model: 'gemini-3-pro-preview',
+        contents: `IDIOMA ATUAL: ${currentLangName}\nOBJETOS NO GEOGEBRA:\n${objects}\n\nUTILIZADOR: ${userText}`,
+        config: {
+          systemInstruction: `És o GeoGebra Omni, um assistente matemático avançado e tutor digital.
+          Estás integrado numa aplicação que corre o GeoGebra Classic.
+          
+          OBJETIVO:
+          Ajudar o utilizador a explorar matemática, geometria e álgebra através de visualizações no GeoGebra.
+          
+          REGRAS:
+          1. Responde SEMPRE em ${currentLangName.toUpperCase()}.
+          2. Sempre que o utilizador pedir para criar, desenhar, calcular ou manipular algo, deves usar a ferramenta 'executeGGBCommands'.
+          3. Garante que os comandos enviados são compatíveis com a sintaxe oficial do GeoGebra (ex: "Segment((0,0), (2,2))", "f(x)=x^2").
+          4. No texto da resposta, sê didático e explica o raciocínio matemático por trás da construção.`,
+          tools: [
+            { functionDeclarations: [ggbCommandTool] }
+            // Nota: googleSearch removido para evitar conflito com functionDeclarations
+          ]
+        }
+      });
 
-      if (text) {
-        setMessages(prev => [...prev, { role: 'ai', text: text }]);
+      // 1. Verificar e executar Tool Calls (Ações no GeoGebra)
+      if (response.functionCalls) {
+        for (const fc of response.functionCalls) {
+          if (fc.name === 'executeGGBCommands' && ggb) {
+            const args = fc.args as any;
+            const commands = args.commands;
+            const explanation = args.explanation;
+            
+            if (Array.isArray(commands)) {
+              commands.forEach(cmd => ggb.evalCommand(cmd));
+              
+              setMessages(prev => [...prev, { 
+                role: 'ai', 
+                text: `**Ação executada no GeoGebra:** ${explanation || "Objetos criados no gráfico."}`, 
+                isAction: true 
+              }]);
+            }
+          }
+        }
+      }
+
+      // 2. Mostrar resposta de texto principal
+      if (response.text) {
+        setMessages(prev => [...prev, { role: 'ai', text: response.text }]);
       }
     } catch (e) {
       console.error(e);
-      setMessages(prev => [...prev, { role: 'ai', text: "Erro: Verifica a tua API Key e a ligação." }]);
+      setMessages(prev => [...prev, { role: 'ai', text: "Ocorreu um erro ao processar o seu pedido. Por favor, tente novamente ou verifique as instruções." }]);
     } finally {
       setLoading(false);
     }
@@ -80,7 +135,7 @@ const GeminiPanel = ({ currentLangCode }) => {
           </div>
           <div>
             <h2 className="font-bold text-lg gemini-text-gradient leading-none">GeoGebra Omni</h2>
-            <p className="text-[10px] text-indigo-600 font-black uppercase tracking-widest mt-1">Mode: {LANGUAGES[currentLangCode].name}</p>
+            <p className="text-[10px] text-indigo-600 font-black uppercase tracking-widest mt-1">Controlo Direto</p>
           </div>
         </div>
       </div>
@@ -89,7 +144,9 @@ const GeminiPanel = ({ currentLangCode }) => {
         {messages.map((m, i) => (
           <div key={i} className={`flex ${m.role === 'user' ? 'justify-end' : 'justify-start'}`}>
             <div className={`max-w-[90%] p-4 rounded-2xl text-sm shadow-sm transition-all ${
-              m.role === 'user' ? 'bg-indigo-600 text-white rounded-tr-none' : 'bg-white text-slate-800 border border-slate-100 rounded-tl-none leading-relaxed'
+              m.role === 'user' ? 'bg-indigo-600 text-white rounded-tr-none shadow-indigo-200' : 
+              m.isAction ? 'bg-emerald-50 text-emerald-800 border border-emerald-100 rounded-lg text-xs' :
+              'bg-white text-slate-800 border border-slate-100 rounded-tl-none leading-relaxed'
             }`}>
               <ReactMarkdown remarkPlugins={[remarkMath]} rehypePlugins={[rehypeKatex]}>{m.text}</ReactMarkdown>
             </div>
@@ -100,8 +157,17 @@ const GeminiPanel = ({ currentLangCode }) => {
 
       <div className="p-4 bg-white border-t border-gray-100">
         <div className="relative flex items-center">
-          <input type="text" value={input} onChange={(e) => setInput(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && handleChatSend()} placeholder={`Escreva em ${LANGUAGES[currentLangCode].name}...`} className="w-full pl-4 pr-12 py-4 rounded-2xl bg-slate-50 border border-slate-200 text-sm focus:ring-2 focus:ring-indigo-400 focus:outline-none transition-all" />
-          <button onClick={handleChatSend} className="absolute right-2 p-2 rounded-xl bg-indigo-600 text-white shadow-lg active:scale-95 transition-transform"><svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M13 5l7 7-7 7M5 5l7 7-7 7" /></svg></button>
+          <input 
+            type="text" 
+            value={input} 
+            onChange={(e) => setInput(e.target.value)} 
+            onKeyDown={(e) => e.key === 'Enter' && handleChatSend()} 
+            placeholder={`Peça algo (ex: "faz um cubo")`} 
+            className="w-full pl-4 pr-12 py-4 rounded-2xl bg-slate-50 border border-slate-200 text-sm focus:ring-2 focus:ring-indigo-400 focus:outline-none transition-all" 
+          />
+          <button onClick={handleChatSend} className="absolute right-2 p-2 rounded-xl bg-indigo-600 text-white shadow-lg active:scale-95 transition-transform disabled:opacity-50" disabled={loading}>
+            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M13 5l7 7-7 7M5 5l7 7-7 7" /></svg>
+          </button>
         </div>
       </div>
     </div>
@@ -132,7 +198,7 @@ const App = () => {
           "appletOnLoad": function(api) {
             ggbApiRef.current = api;
             (window as any).ggbApplet = api;
-            api.setPerspective(PERSPECTIVES[appType]);
+            api.setPerspective(PERSPECTIVES[appType as keyof typeof PERSPECTIVES]);
           }
         };
         new (window as any).GGBApplet(params, true).inject('ggb-element');
@@ -143,7 +209,7 @@ const App = () => {
 
   useEffect(() => {
     if (ggbApiRef.current) {
-      ggbApiRef.current.setPerspective(PERSPECTIVES[appType]);
+      ggbApiRef.current.setPerspective(PERSPECTIVES[appType as keyof typeof PERSPECTIVES]);
     }
   }, [appType]);
 
